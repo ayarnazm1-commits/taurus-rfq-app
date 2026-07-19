@@ -8,14 +8,12 @@ st.set_page_config(page_title="Taurus RFQ Generator", page_icon="📄", layout="
 st.title("📄 Taurus Procurement RFQ Generator")
 st.write("Paste your raw Purchase Requisition (PR) text below to instantly generate a standardized RFQ PDF.")
 
-# Text area for user input
 pr_text = str(st.text_area("Paste PR Text Here:", height=250))
 
 def parse_pr(text):
-    """Simple parser to extract relevant fields from the PR text"""
-    data = {"unit": "Taurus", "pr_num": "UNKNOWN", "items": []}
+    """Smarter parser to extract relevant fields from the PR text"""
+    data = {"unit": "Taurus", "pr_num": "UNKNOWN", "items": [], "email": "", "phone": ""}
     
-    # Identify Business Unit
     if "Bezhan" in text or "BPC" in text:
         data["unit"] = "BPC"
     elif "QTT" in text:
@@ -23,34 +21,36 @@ def parse_pr(text):
     elif "SHO" in text:
         data["unit"] = "SHO"
         
-    # Extract PR Number
-    pr_match = re.search(r'BPC-PR\d+-\d+-\w+|PR-\d+-\w+', text)
+    pr_match = re.search(r'(BPC-)?PR\d*-\d+-\w+', text)
     if pr_match:
         data["pr_num"] = pr_match.group(0)
         
-    # Simple mock extraction for items (in production, you can connect this to an LLM API)
-    # For demonstration, it parses basic numerical rows if found
+    email_match = re.search(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', text)
+    data["email"] = email_match.group(0) if email_match else "procurement@taurusenergy.com"
+    
+    phone_match = re.search(r'\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}', text)
+    data["phone"] = phone_match.group(0) if phone_match else "+964 XXX XXX XXXX"
+
     lines = text.split('\n')
     for line in lines:
         if "|" in line and any(char.isdigit() for char in line):
-            parts = [p.strip() for p in line.split('|') if p.strip()]
-            if len(parts) >= 5 and parts[0].replace('.','').isdigit():
+            parts = [p.strip() for p in line.split('|')]
+            if len(parts) > 5 and parts[0].replace('.', '').isdigit():
                 data["items"].append({
                     "code": parts[1] if len(parts) > 1 else "",
                     "short_desc": parts[2] if len(parts) > 2 else "Item",
                     "long_desc": parts[3] if len(parts) > 3 else "",
-                    "uom": parts[7] if len(parts) > 7 else "Each",
-                    "qty": parts[6] if len(parts) > 6 else "1"
+                    "uom": parts[-2] if len(parts) >= 3 else "Each",
+                    "qty": parts[-3] if len(parts) >= 3 else "1"
                 })
                 
-    # Fallback default item if parsing fails to ensure code runs
     if not data["items"]:
         data["items"].append({
-            "code": "013262",
-            "short_desc": "CHAIR, EXECUTIVE",
-            "long_desc": "CHAIR, OFFICE, BLACK, FABRIC AND CUTTING FOAM SEAT",
+            "code": "000000",
+            "short_desc": "MANUAL ENTRY REQUIRED",
+            "long_desc": "Could not parse items. Please check PR formatting.",
             "uom": "Each",
-            "qty": "10"
+            "qty": "0"
         })
     return data
 
@@ -58,17 +58,21 @@ if st.button("Generate RFQ PDF", type="primary"):
     if not pr_text.strip():
         st.warning("Please paste some PR text first.")
     else:
-        # Parse the data
         parsed = parse_pr(pr_text)
         b_unit = parsed["unit"]
         pr_num = parsed["pr_num"]
         items_list = parsed["items"]
+        contact_email = parsed["email"]
+        contact_phone = parsed["phone"]
         
-        # Setup template details
         today = datetime.now()
         rfq_date = today.strftime("%B %d, %Y")
         return_by = (today + timedelta(days=5)).strftime("%B %d, %Y")
-        rfq_number = f"SCED-BPC-{pr_num}" if b_unit == "BPC" else f"SCED-{pr_num}"
+        
+        if pr_num.startswith("BPC-"):
+            rfq_number = f"SCED-{pr_num}"
+        else:
+            rfq_number = f"SCED-BPC-{pr_num}" if b_unit == "BPC" else f"SCED-{pr_num}"
         
         if b_unit == "BPC":
             contact_name = "Ayar Nadhm Ghafour"
@@ -79,7 +83,6 @@ if st.button("Generate RFQ PDF", type="primary"):
             company_name = "Taurus Arm Company for Power Generation Ltd."
             delivery_address = "Taurus Arm Company for Power Generation Ltd.\nBazian Power Plant/Kani Shaetan/Sulaymaniyah, Iraq"
 
-        # Generate PDF using FPDF
         class PDF(FPDF):
             def header(self):
                 self.set_font('Arial', 'B', 16)
@@ -91,7 +94,6 @@ if st.button("Generate RFQ PDF", type="primary"):
         pdf.add_page()
         pdf.set_font('Arial', '', 10)
         
-        # Header Metadata
         pdf.set_font('Arial', 'B', 10)
         pdf.cell(40, 6, 'RFQ Date:', 0, 0)
         pdf.set_font('Arial', '', 10)
@@ -111,9 +113,20 @@ if st.button("Generate RFQ PDF", type="primary"):
         pdf.cell(40, 6, 'From:', 0, 0)
         pdf.set_font('Arial', '', 10)
         pdf.cell(0, 6, contact_name, 0, 1)
+        
+        pdf.cell(90, 6, '', 0, 0)
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(40, 6, 'Email:', 0, 0)
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(0, 6, contact_email, 0, 1)
+
+        pdf.cell(90, 6, '', 0, 0)
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(40, 6, 'Phone:', 0, 0)
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(0, 6, contact_phone, 0, 1)
         pdf.ln(5)
         
-        # Address
         pdf.set_fill_color(248, 250, 252)
         pdf.set_font('Arial', 'B', 10)
         pdf.cell(0, 6, 'Delivery Address:', 0, 1, 'L', fill=True)
@@ -124,7 +137,6 @@ if st.button("Generate RFQ PDF", type="primary"):
         pdf.cell(0, 6, f'This Purchase/Service is subject to {company_name} Terms and Conditions.', 0, 1)
         pdf.ln(5)
         
-        # Table Headers
         pdf.set_font('Arial', 'B', 9)
         pdf.set_fill_color(26, 54, 93)
         pdf.set_text_color(255, 255, 255)
@@ -134,7 +146,6 @@ if st.button("Generate RFQ PDF", type="primary"):
             pdf.cell(cols[i], 8, headers[i], 1, 0, 'C', fill=True)
         pdf.ln()
         
-        # Table Body
         pdf.set_font('Arial', '', 9)
         pdf.set_text_color(0, 0, 0)
         for index, item in enumerate(items_list, 1):
@@ -158,7 +169,28 @@ if st.button("Generate RFQ PDF", type="primary"):
             if pdf.get_y() < y_start + row_height:
                 pdf.set_y(y_start + row_height)
                 
-        # Output as bytes for the download button
+        # --- NEW SECTION: TERMS AND CONDITIONS ---
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 12)
+        pdf.set_text_color(26, 54, 93)
+        pdf.cell(0, 10, f'Terms and Conditions - {company_name}', 0, 1, 'L')
+        pdf.ln(2)
+        
+        pdf.set_font('Arial', '', 9)
+        pdf.set_text_color(0, 0, 0)
+        tc_text = (
+            "1. ACCEPTANCE: This Request for Quotation (RFQ) does not constitute a binding offer to buy. "
+            "A formal Purchase Order must be issued for any agreement to be valid.\n\n"
+            "2. PRICING: All prices must be quoted in the specified currency, be inclusive of applicable taxes unless "
+            "stated otherwise, and remain valid for a minimum of 30 days.\n\n"
+            "3. DELIVERY: Time is of the essence. Please clearly specify lead times and delivery schedules in your quotation.\n\n"
+            "4. QUALITY: All goods and services must meet the exact specifications outlined in this RFQ and be free from defects.\n\n"
+            "5. COMPLIANCE: The vendor agrees to comply with all applicable local laws, regulations, and industry standards "
+            "while fulfilling this request."
+        )
+        pdf.multi_cell(0, 5, tc_text)
+        # -----------------------------------------
+                
         pdf_output = pdf.output(dest='S').encode('latin-1')
         
         st.success("🎉 RFQ Document compiled successfully!")
