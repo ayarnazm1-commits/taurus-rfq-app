@@ -5,6 +5,14 @@ import re
 
 st.set_page_config(page_title="Taurus RFQ Generator", page_icon="📄", layout="centered")
 
+# --- SIDEBAR FOR CONTACT INFO OVERRIDES ---
+st.sidebar.header("Contact Details")
+st.sidebar.write("Update your contact info here if needed.")
+# FIXED: Your exact email and phone number are now permanently set as the defaults
+override_email = st.sidebar.text_input("Your Email:", "ayar.ghafur@taurusenergy.com")
+override_phone = st.sidebar.text_input("Your Phone:", "+964 770 007 1210")
+# ----------------------------------------------
+
 st.title("📄 Taurus Procurement RFQ Generator")
 st.write("Paste your raw Purchase Requisition (PR) text below to instantly generate a standardized RFQ PDF.")
 
@@ -12,7 +20,7 @@ pr_text = str(st.text_area("Paste PR Text Here:", height=250))
 
 def parse_pr(text):
     """Smarter parser to extract relevant fields from the PR text"""
-    data = {"unit": "Taurus", "pr_num": "UNKNOWN", "items": [], "email": "", "phone": ""}
+    data = {"unit": "Taurus", "pr_num": "UNKNOWN", "items": []}
     
     if "Bezhan" in text or "BPC" in text:
         data["unit"] = "BPC"
@@ -24,12 +32,6 @@ def parse_pr(text):
     pr_match = re.search(r'(BPC-)?PR\d*-\d+-\w+', text)
     if pr_match:
         data["pr_num"] = pr_match.group(0)
-        
-    email_match = re.search(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', text)
-    data["email"] = email_match.group(0) if email_match else "procurement@taurusenergy.com"
-    
-    phone_match = re.search(r'\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}', text)
-    data["phone"] = phone_match.group(0) if phone_match else "+964 XXX XXX XXXX"
 
     lines = text.split('\n')
     for line in lines:
@@ -62,8 +64,10 @@ if st.button("Generate RFQ PDF", type="primary"):
         b_unit = parsed["unit"]
         pr_num = parsed["pr_num"]
         items_list = parsed["items"]
-        contact_email = parsed["email"]
-        contact_phone = parsed["phone"]
+        
+        # Pulls from the sidebar so it's always your correct contact info
+        contact_email = override_email
+        contact_phone = override_phone
         
         today = datetime.now()
         rfq_date = today.strftime("%B %d, %Y")
@@ -94,6 +98,7 @@ if st.button("Generate RFQ PDF", type="primary"):
         pdf.add_page()
         pdf.set_font('Arial', '', 10)
         
+        # Header Metadata
         pdf.set_font('Arial', 'B', 10)
         pdf.cell(40, 6, 'RFQ Date:', 0, 0)
         pdf.set_font('Arial', '', 10)
@@ -127,6 +132,7 @@ if st.button("Generate RFQ PDF", type="primary"):
         pdf.cell(0, 6, contact_phone, 0, 1)
         pdf.ln(5)
         
+        # Address
         pdf.set_fill_color(248, 250, 252)
         pdf.set_font('Arial', 'B', 10)
         pdf.cell(0, 6, 'Delivery Address:', 0, 1, 'L', fill=True)
@@ -137,6 +143,7 @@ if st.button("Generate RFQ PDF", type="primary"):
         pdf.cell(0, 6, f'This Purchase/Service is subject to {company_name} Terms and Conditions.', 0, 1)
         pdf.ln(5)
         
+        # Table Headers
         pdf.set_font('Arial', 'B', 9)
         pdf.set_fill_color(26, 54, 93)
         pdf.set_text_color(255, 255, 255)
@@ -146,30 +153,36 @@ if st.button("Generate RFQ PDF", type="primary"):
             pdf.cell(cols[i], 8, headers[i], 1, 0, 'C', fill=True)
         pdf.ln()
         
+        # Table Body
         pdf.set_font('Arial', '', 9)
         pdf.set_text_color(0, 0, 0)
         for index, item in enumerate(items_list, 1):
             desc_text = f"{item.get('code', '')} {item['short_desc']}\n{item['long_desc']}"
-            lines = pdf.get_string_width(desc_text) / (cols[1] - 2)
-            row_height = max(6, 5 * (int(lines) + 1))
+            
+            lines_needed = (len(desc_text) // 35) + 1 
+            row_height = max(8, 5 * lines_needed)
             
             x_start = pdf.get_x()
             y_start = pdf.get_y()
             
+            if y_start + row_height > 270:
+                pdf.add_page()
+                y_start = pdf.get_y()
+            
             pdf.cell(cols[0], row_height, str(index), 1, 0, 'C')
-            pdf.set_xy(x_start + cols[0], y_start)
+            
+            x_desc = pdf.get_x()
             pdf.multi_cell(cols[1], 5, desc_text, 1, 'L')
             
-            pdf.set_xy(x_start + cols[0] + cols[1], y_start)
+            pdf.set_xy(x_desc + cols[1], y_start)
             pdf.cell(cols[2], row_height, item['uom'], 1, 0, 'C')
             pdf.cell(cols[3], row_height, item['qty'], 1, 0, 'C')
             pdf.cell(cols[4], row_height, '', 1, 0, 'C')
             pdf.cell(cols[5], row_height, '', 1, 1, 'C')
             
-            if pdf.get_y() < y_start + row_height:
-                pdf.set_y(y_start + row_height)
+            pdf.set_y(y_start + row_height)
                 
-        # --- NEW SECTION: TERMS AND CONDITIONS ---
+        # Terms and Conditions Page
         pdf.add_page()
         pdf.set_font('Arial', 'B', 12)
         pdf.set_text_color(26, 54, 93)
@@ -189,7 +202,6 @@ if st.button("Generate RFQ PDF", type="primary"):
             "while fulfilling this request."
         )
         pdf.multi_cell(0, 5, tc_text)
-        # -----------------------------------------
                 
         pdf_output = pdf.output(dest='S').encode('latin-1')
         
